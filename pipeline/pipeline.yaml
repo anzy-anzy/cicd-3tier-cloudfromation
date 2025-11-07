@@ -1,160 +1,171 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: CI/CD pipeline (DEV us-east-1 -> manual -> PROD us-west-2)
+Description: >
+  AWS CodePipeline to build and deploy a 3-tier architecture using CloudFormation.
+  Includes build, lint, and multi-region deployment (Dev and Prod).
 
 Parameters:
-  GitHubConnectionArn: { Type: String }
-  RepoOwner: { Type: String }
-  RepoName: { Type: String }
-  RepoBranch: { Type: String, Default: main }
-  ArtifactBucket: { Type: String }
-  DevEnvName: { Type: String, Default: DEV }
-  ProdEnvName: { Type: String, Default: PROD }
+  GitHubConnectionArn:
+    Type: String
+    Description: CodeStar connection ARN for GitHub.
+  RepoOwner:
+    Type: String
+    Description: GitHub repository owner.
+  RepoName:
+    Type: String
+    Description: GitHub repository name.
+  RepoBranch:
+    Type: String
+    Description: GitHub branch to build from.
+  ArtifactBucket:
+    Type: String
+    Description: S3 bucket for pipeline artifacts.
 
 Resources:
-  PipelineRole:
+  CodePipelineRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
           - Effect: Allow
-            Principal: { Service: codepipeline.amazonaws.com }
+            Principal:
+              Service: codepipeline.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AdministratorAccess
+        - arn:aws:iam::aws:policy/AWSCodePipeline_FullAccess
+        - arn:aws:iam::aws:policy/AWSCloudFormationFullAccess
+        - arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
 
-  BuildRole:
+  CodeBuildRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
           - Effect: Allow
-            Principal: { Service: codebuild.amazonaws.com }
+            Principal:
+              Service: codebuild.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AdministratorAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AWSCloudFormationFullAccess
+        - arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess
 
-  BuildProject:
+  CodeBuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
-      Name: three-tier-build
-      ServiceRole: !GetAtt BuildRole.Arn
-      Artifacts: { Type: CODEPIPELINE }
+      Name: !Sub '${AWS::StackName}-build'
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
       Environment:
         ComputeType: BUILD_GENERAL1_SMALL
-        Image: aws/codebuild/standard:7.0
+        Image: aws/codebuild/standard:6.0
         Type: LINUX_CONTAINER
-      Source: { Type: CODEPIPELINE }
+      Source:
+        Type: CODEPIPELINE
       TimeoutInMinutes: 20
 
-  Pipeline:
+  CodePipeline:
     Type: AWS::CodePipeline::Pipeline
     Properties:
-      RoleArn: !GetAtt PipelineRole.Arn
-      ArtifactStore:
-        Type: S3
-        Location: !Ref ArtifactBucket
+      Name: !Sub '${AWS::StackName}-pipeline'
+      RoleArn: !GetAtt CodePipelineRole.Arn
+
+      # ✅ FIX: Multi-region artifact stores
+      ArtifactStores:
+        - Region: us-east-1
+          ArtifactStore:
+            Type: S3
+            Location: !Ref ArtifactBucket
+        - Region: us-west-2
+          ArtifactStore:
+            Type: S3
+            Location: anzypipeline-artifacts-west2
+
       Stages:
         - Name: Source
           Actions:
-            - Name: GitHub
-              ActionTypeId: { Category: Source, Owner: AWS, Provider: CodeStarSourceConnection, Version: '1' }
+            - Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: 1
               Configuration:
                 ConnectionArn: !Ref GitHubConnectionArn
                 FullRepositoryId: !Sub '${RepoOwner}/${RepoName}'
                 BranchName: !Ref RepoBranch
-              OutputArtifacts: [{ Name: SourceOut }]
+                OutputArtifactFormat: CODE_ZIP
+              OutputArtifacts:
+                - Name: SourceOutput
 
         - Name: Build
           Actions:
-            - Name: CodeBuild
-              ActionTypeId: { Category: Build, Owner: AWS, Provider: CodeBuild, Version: '1' }
+            - Name: BuildAction
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: 1
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: BuildOutput
               Configuration:
-                ProjectName: !Ref BuildProject
-              InputArtifacts: [{ Name: SourceOut }]
-              OutputArtifacts: [{ Name: BuildOut }]
+                ProjectName: !Ref CodeBuildProject
+              Region: us-east-1
 
-        - Name: Deploy-DEV
+        - Name: DeployDev
           Actions:
-            - Name: VPC-Dev
-              ActionTypeId: { Category: Deploy, Owner: AWS, Provider: CloudFormation, Version: '1' }
+            - Name: DeployDevStack
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
               Configuration:
                 ActionMode: CREATE_UPDATE
-                StackName: dev-vpc
-                TemplatePath: BuildOut::templates/vpc.yaml
-                ParameterOverrides: !Sub |
-                  {"EnvName":"${DevEnvName}"}
-                Capabilities: CAPABILITY_NAMED_IAM
+                StackName: dev-3tier-stack
+                Capabilities: CAPABILITY_IAM
+                TemplatePath: BuildOutput::templates/app.yaml
+                RoleArn: !GetAtt CodePipelineRole.Arn
+              InputArtifacts:
+                - Name: BuildOutput
               Region: us-east-1
-              InputArtifacts: [{ Name: BuildOut }]
-
-            - Name: DB-Dev
-              ActionTypeId: { Category: Deploy, Owner: AWS, Provider: CloudFormation, Version: '1' }
-              Configuration:
-                ActionMode: CREATE_UPDATE
-                StackName: dev-db
-                TemplatePath: BuildOut::templates/db.yaml
-                ParameterOverrides: !Sub |
-                  {"EnvName":"${DevEnvName}","DBPassword":"DemoPassw0rd!"}
-                Capabilities: CAPABILITY_NAMED_IAM
-              Region: us-east-1
-              InputArtifacts: [{ Name: BuildOut }]
-
-            - Name: APP-Dev
-              ActionTypeId: { Category: Deploy, Owner: AWS, Provider: CloudFormation, Version: '1' }
-              Configuration:
-                ActionMode: CREATE_UPDATE
-                StackName: dev-app
-                TemplatePath: BuildOut::templates/app.yaml
-                ParameterOverrides: !Sub |
-                  {"EnvName":"${DevEnvName}"}
-                Capabilities: CAPABILITY_NAMED_IAM
-              Region: us-east-1
-              InputArtifacts: [{ Name: BuildOut }]
 
         - Name: ManualApproval
           Actions:
-            - Name: ApprovePromotion
-              ActionTypeId: { Category: Approval, Owner: AWS, Provider: Manual, Version: '1' }
-              Configuration:
-                CustomData: "Review DEV (us-east-1), then approve to deploy PROD (us-west-2)."
+            - Name: ApproveBeforeProd
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: 1
 
-        - Name: Deploy-PROD
+        - Name: DeployProd
           Actions:
-            - Name: VPC-Prod
-              ActionTypeId: { Category: Deploy, Owner: AWS, Provider: CloudFormation, Version: '1' }
+            - Name: DeployProdStack
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
               Configuration:
                 ActionMode: CREATE_UPDATE
-                StackName: prod-vpc
-                TemplatePath: BuildOut::templates/vpc.yaml
-                ParameterOverrides: !Sub |
-                  {"EnvName":"${ProdEnvName}"}
-                Capabilities: CAPABILITY_NAMED_IAM
+                StackName: prod-3tier-stack
+                Capabilities: CAPABILITY_IAM
+                TemplatePath: BuildOutput::templates/app.yaml
+                RoleArn: !GetAtt CodePipelineRole.Arn
+              InputArtifacts:
+                - Name: BuildOutput
               Region: us-west-2
-              InputArtifacts: [{ Name: BuildOut }]
 
-            - Name: DB-Prod
-              ActionTypeId: { Category: Deploy, Owner: AWS, Provider: CloudFormation, Version: '1' }
-              Configuration:
-                ActionMode: CREATE_UPDATE
-                StackName: prod-db
-                TemplatePath: BuildOut::templates/db.yaml
-                ParameterOverrides: !Sub |
-                  {"EnvName":"${ProdEnvName}","DBPassword":"ProdPassw0rd!"}
-                Capabilities: CAPABILITY_NAMED_IAM
-              Region: us-west-2
-              InputArtifacts: [{ Name: BuildOut }]
-
-            - Name: APP-Prod
-              ActionTypeId: { Category: Deploy, Owner: AWS, Provider: CloudFormation, Version: '1' }
-              Configuration:
-                ActionMode: CREATE_UPDATE
-                StackName: prod-app
-                TemplatePath: BuildOut::templates/app.yaml
-                ParameterOverrides: !Sub |
-                  {"EnvName":"${ProdEnvName}"}
-                Capabilities: CAPABILITY_NAMED_IAM
-              Region: us-west-2
-              InputArtifacts: [{ Name: BuildOut }]
-
+Outputs:
+  PipelineName:
+    Description: Name of the created CodePipeline.
+    Value: !Ref CodePipeline
+  BuildProject:
+    Description: CodeBuild project used in the pipeline.
+    Value: !Ref CodeBuildProject
