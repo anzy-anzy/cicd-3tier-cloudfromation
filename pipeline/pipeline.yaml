@@ -1,0 +1,160 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CI/CD pipeline (DEV us-east-1 -> manual -> PROD us-west-2)
+
+Parameters:
+  GitHubConnectionArn: { Type: String }
+  RepoOwner: { Type: String }
+  RepoName: { Type: String }
+  RepoBranch: { Type: String, Default: main }
+  ArtifactBucket: { Type: String }
+  DevEnvName: { Type: String, Default: DEV }
+  ProdEnvName: { Type: String, Default: PROD }
+
+Resources:
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: codepipeline.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
+  BuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: codebuild.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
+  BuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: three-tier-build
+      ServiceRole: !GetAtt BuildRole.Arn
+      Artifacts: { Type: CODEPIPELINE }
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        Type: LINUX_CONTAINER
+      Source: { Type: CODEPIPELINE }
+      TimeoutInMinutes: 20
+
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      RoleArn: !GetAtt PipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: GitHub
+              ActionTypeId: { Category: Source, Owner: AWS, Provider: CodeStarSourceConnection, Version: '1' }
+              Configuration:
+                ConnectionArn: !Ref GitHubConnectionArn
+                FullRepositoryId: !Sub '${RepoOwner}/${RepoName}'
+                BranchName: !Ref RepoBranch
+              OutputArtifacts: [{ Name: SourceOut }]
+
+        - Name: Build
+          Actions:
+            - Name: CodeBuild
+              ActionTypeId: { Category: Build, Owner: AWS, Provider: CodeBuild, Version: '1' }
+              Configuration:
+                ProjectName: !Ref BuildProject
+              InputArtifacts: [{ Name: SourceOut }]
+              OutputArtifacts: [{ Name: BuildOut }]
+
+        - Name: Deploy-DEV
+          Actions:
+            - Name: VPC-Dev
+              ActionTypeId: { Category: Deploy, Owner: AWS, Provider: CloudFormation, Version: '1' }
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: dev-vpc
+                TemplatePath: BuildOut::templates/vpc.yaml
+                ParameterOverrides: !Sub |
+                  {"EnvName":"${DevEnvName}"}
+                Capabilities: CAPABILITY_NAMED_IAM
+              Region: us-east-1
+              InputArtifacts: [{ Name: BuildOut }]
+
+            - Name: DB-Dev
+              ActionTypeId: { Category: Deploy, Owner: AWS, Provider: CloudFormation, Version: '1' }
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: dev-db
+                TemplatePath: BuildOut::templates/db.yaml
+                ParameterOverrides: !Sub |
+                  {"EnvName":"${DevEnvName}","DBPassword":"DemoPassw0rd!"}
+                Capabilities: CAPABILITY_NAMED_IAM
+              Region: us-east-1
+              InputArtifacts: [{ Name: BuildOut }]
+
+            - Name: APP-Dev
+              ActionTypeId: { Category: Deploy, Owner: AWS, Provider: CloudFormation, Version: '1' }
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: dev-app
+                TemplatePath: BuildOut::templates/app.yaml
+                ParameterOverrides: !Sub |
+                  {"EnvName":"${DevEnvName}"}
+                Capabilities: CAPABILITY_NAMED_IAM
+              Region: us-east-1
+              InputArtifacts: [{ Name: BuildOut }]
+
+        - Name: ManualApproval
+          Actions:
+            - Name: ApprovePromotion
+              ActionTypeId: { Category: Approval, Owner: AWS, Provider: Manual, Version: '1' }
+              Configuration:
+                CustomData: "Review DEV (us-east-1), then approve to deploy PROD (us-west-2)."
+
+        - Name: Deploy-PROD
+          Actions:
+            - Name: VPC-Prod
+              ActionTypeId: { Category: Deploy, Owner: AWS, Provider: CloudFormation, Version: '1' }
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: prod-vpc
+                TemplatePath: BuildOut::templates/vpc.yaml
+                ParameterOverrides: !Sub |
+                  {"EnvName":"${ProdEnvName}"}
+                Capabilities: CAPABILITY_NAMED_IAM
+              Region: us-west-2
+              InputArtifacts: [{ Name: BuildOut }]
+
+            - Name: DB-Prod
+              ActionTypeId: { Category: Deploy, Owner: AWS, Provider: CloudFormation, Version: '1' }
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: prod-db
+                TemplatePath: BuildOut::templates/db.yaml
+                ParameterOverrides: !Sub |
+                  {"EnvName":"${ProdEnvName}","DBPassword":"ProdPassw0rd!"}
+                Capabilities: CAPABILITY_NAMED_IAM
+              Region: us-west-2
+              InputArtifacts: [{ Name: BuildOut }]
+
+            - Name: APP-Prod
+              ActionTypeId: { Category: Deploy, Owner: AWS, Provider: CloudFormation, Version: '1' }
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: prod-app
+                TemplatePath: BuildOut::templates/app.yaml
+                ParameterOverrides: !Sub |
+                  {"EnvName":"${ProdEnvName}"}
+                Capabilities: CAPABILITY_NAMED_IAM
+              Region: us-west-2
+              InputArtifacts: [{ Name: BuildOut }]
+

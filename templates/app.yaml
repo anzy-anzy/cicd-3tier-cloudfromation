@@ -1,0 +1,188 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Application stack with ALB + EC2 AutoScaling (nginx web page)
+
+Parameters:
+  EnvName:
+    Type: String
+    AllowedValues: [DEV, PROD]
+  InstanceType:
+    Type: String
+    Default: t3.micro
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
+
+Resources:
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow inbound HTTP traffic from the Internet
+      VpcId: !ImportValue
+        'Fn::Sub': '${EnvName}-VpcId'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvName}-alb-sg'
+
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow traffic from ALB to EC2
+      VpcId: !ImportValue
+        'Fn::Sub': '${EnvName}-VpcId'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvName}-ec2-sg'
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub '${EnvName}-alb'
+      Scheme: internet-facing
+      Type: application
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Subnets:
+        !Split
+          - ","
+          - !ImportValue
+            'Fn::Sub': '${EnvName}-PubSubnets'
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvName}-alb'
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !ImportValue
+        'Fn::Sub': '${EnvName}-VpcId'
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      HealthCheckPath: /
+      Matcher:
+        HttpCode: '200-399'
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvName}-tg'
+
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvName}-ec2-role'
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2Role
+
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub '${EnvName}-launch-template'
+      LaunchTemplateData:
+        ImageId: !Ref AmiId
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Arn: !GetAtt InstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref EC2SecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -eux
+            dnf install -y nginx
+            cat > /usr/share/nginx/html/index.html <<'HTML'
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>AWS 3-Tier Project</title>
+              <style>
+                body { background-color: #001f3f; color: white; font-family: 'Segoe UI', sans-serif; text-align: center; }
+                header { background: #002b5c; padding: 30px; color: #00aced; }
+                main { background: #012a4a; margin: 30px auto; padding: 30px; border-radius: 10px; width: 80%; }
+                h2 { color: #5cd2ff; border-bottom: 2px solid #5cd2ff; }
+                li { list-style: none; margin: 10px 0; font-size: 1.1em; }
+                .check { color: #32cd32; }
+              </style>
+            </head>
+            <body>
+              <header>
+                <h1>Welcome to My AWS 3-Tier CI/CD Project!</h1>
+                <p>Deployed using AWS CodePipeline, CodeBuild, and CloudFormation</p>
+              </header>
+              <main>
+                <h2>Deployment Summary</h2>
+                <ul>
+                  <li><span class="check">✔</span> Environment: ${EnvName}</li>
+                  <li><span class="check">✔</span> Deployed to AWS EC2</li>
+                  <li><span class="check">✔</span> Managed by CloudFormation</li>
+                </ul>
+              </main>
+            </body>
+            </html>
+            HTML
+            systemctl enable nginx
+            systemctl start nginx
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        !Split
+          - ","
+          - !ImportValue
+            'Fn::Sub': '${EnvName}-PrivSubnets'
+      MinSize: 1
+      MaxSize: 2
+      DesiredCapacity: 1
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      TargetGroupARNs:
+        - !Ref TargetGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvName}-asg'
+          PropagateAtLaunch: true
+
+Outputs:
+  ALBDNS:
+    Description: The ALB DNS Name
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+    Export:
+      Name: !Sub '${EnvName}-ALBDNS'
+

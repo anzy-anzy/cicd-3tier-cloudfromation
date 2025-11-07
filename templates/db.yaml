@@ -1,0 +1,77 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: RDS MySQL in private subnets for 3-tier CI/CD project
+
+Parameters:
+  EnvName:
+    Type: String
+    AllowedValues: [DEV, PROD]
+  DBUser:
+    Type: String
+    Default: appuser
+  DBPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+  DBName:
+    Type: String
+    Default: appdb
+
+Resources:
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow MySQL access within VPC
+      VpcId: !ImportValue
+        'Fn::Sub': '${EnvName}-VpcId'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.20.0.0/16
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvName}-db-sg'
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Private subnets for RDS instance
+      SubnetIds:
+        !Split
+          - ","
+          - !ImportValue
+            'Fn::Sub': '${EnvName}-PrivSubnets'
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvName}-db-subnet-group'
+
+  MyDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub '${EnvName}-mysql-db'
+      AllocatedStorage: 20
+      DBInstanceClass: db.t3.micro
+      Engine: mysql
+      EngineVersion: "8.0.39"
+      MasterUsername: !Ref DBUser
+      MasterUserPassword: !Ref DBPassword
+      DBName: !Ref DBName
+      VPCSecurityGroups:
+        - !Ref DbSecurityGroup
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      MultiAZ: false
+      PubliclyAccessible: false
+      DeletionProtection: false
+      StorageType: gp2
+      BackupRetentionPeriod: 1
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvName}-mysql-db'
+
+Outputs:
+  DbEndpoint:
+    Description: The RDS MySQL endpoint
+    Value: !GetAtt MyDBInstance.Endpoint.Address
+    Export:
+      Name: !Sub '${EnvName}-DbEndpoint'
+

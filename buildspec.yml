@@ -1,0 +1,28 @@
+version: 0.2
+
+env:
+  variables:
+    TEMPLATE_DIR: templates
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.11
+    commands:
+      - pip install cfn-lint
+  pre_build:
+    commands:
+      - echo "Linting CloudFormation templates..."
+      - cfn-lint $TEMPLATE_DIR/*.yaml
+  build:
+    commands:
+      - echo "No compilation required; preparing artifacts."
+  post_build:
+    commands:
+      - echo "Build stage completed successfully."
+artifacts:
+  files:
+    - templates/*.yaml
+    - app/index.template.html
+    - buildspec.yml
+
