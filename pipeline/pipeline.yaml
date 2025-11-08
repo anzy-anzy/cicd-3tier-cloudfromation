@@ -1,106 +1,146 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: >
-  AWS CodePipeline to build and deploy a 3-tier architecture using CloudFormation.
-  Includes build, lint, and multi-region deployment (Dev and Prod).
+Description: CI/CD Pipeline for 3-tier CloudFormation app using Secrets Manager
 
 Parameters:
-  GitHubConnectionArn:
+  GitHubOwner:
     Type: String
-    Description: CodeStar connection ARN for GitHub.
-  RepoOwner:
+    Default: your-github-username
+  GitHubRepo:
     Type: String
-    Description: GitHub repository owner.
-  RepoName:
+    Default: cicd-3tier-cloudformation
+  GitHubBranch:
     Type: String
-    Description: GitHub repository name.
-  RepoBranch:
+    Default: main
+  GitHubToken:
     Type: String
-    Description: GitHub branch to build from.
-  ArtifactBucket:
+    NoEcho: true
+  ProjectName:
     Type: String
-    Description: S3 bucket for pipeline artifacts.
+    Default: cicd-pipeline-stack
 
 Resources:
+  #############################################
+  # S3 bucket for pipeline artifacts
+  #############################################
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+
+  #############################################
+  # IAM Role for CodePipeline
+  #############################################
   CodePipelineRole:
     Type: AWS::IAM::Role
     Properties:
+      RoleName: !Sub "${ProjectName}-CodePipelineRole"
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
+        Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal:
               Service: codepipeline.amazonaws.com
             Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AWSCodePipeline_FullAccess
-        - arn:aws:iam::aws:policy/AWSCloudFormationFullAccess
-        - arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess
-        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Policies:
+        - PolicyName: CodePipelineFullAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:*
+                  - codebuild:*
+                  - cloudformation:*
+                  - iam:PassRole
+                  - secretsmanager:GetSecretValue
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource: "*"
 
+  #############################################
+  # IAM Role for CodeBuild
+  #############################################
   CodeBuildRole:
     Type: AWS::IAM::Role
     Properties:
+      RoleName: !Sub "${ProjectName}-CodeBuildRole"
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
+        Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal:
               Service: codebuild.amazonaws.com
             Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonS3FullAccess
-        - arn:aws:iam::aws:policy/AWSCloudFormationFullAccess
-        - arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess
+      Policies:
+        - PolicyName: CodeBuildInlinePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:*
+                  - s3:*
+                  - cloudformation:ValidateTemplate
+                  - secretsmanager:GetSecretValue
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource: "*"
 
+  #############################################
+  # CodeBuild Project
+  #############################################
   CodeBuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
-      Name: !Sub '${AWS::StackName}-build'
+      Name: !Sub "${ProjectName}-build"
+      Description: "Lint and validate CloudFormation templates"
       ServiceRole: !GetAtt CodeBuildRole.Arn
       Artifacts:
         Type: CODEPIPELINE
       Environment:
         ComputeType: BUILD_GENERAL1_SMALL
-        Image: aws/codebuild/standard:6.0
+        Image: aws/codebuild/standard:7.0
         Type: LINUX_CONTAINER
       Source:
         Type: CODEPIPELINE
-      TimeoutInMinutes: 20
+      TimeoutInMinutes: 15
+      BuildSpec: buildspec.yml
 
-  CodePipeline:
+  #############################################
+  # CodePipeline Definition
+  #############################################
+  CICDPipeline:
     Type: AWS::CodePipeline::Pipeline
     Properties:
-      Name: !Sub '${AWS::StackName}-pipeline'
+      Name: !Sub "${ProjectName}-pipeline"
       RoleArn: !GetAtt CodePipelineRole.Arn
-
-      # ✅ FIX: Multi-region artifact stores
-      ArtifactStores:
-        - Region: us-east-1
-          ArtifactStore:
-            Type: S3
-            Location: !Ref ArtifactBucket
-        - Region: us-west-2
-          ArtifactStore:
-            Type: S3
-            Location: anzypipeline-artifacts-west2
-
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
       Stages:
+        #####################################
+        # Source Stage
+        #####################################
         - Name: Source
           Actions:
             - Name: SourceAction
               ActionTypeId:
                 Category: Source
-                Owner: AWS
-                Provider: CodeStarSourceConnection
+                Owner: ThirdParty
+                Provider: GitHub
                 Version: 1
-              Configuration:
-                ConnectionArn: !Ref GitHubConnectionArn
-                FullRepositoryId: !Sub '${RepoOwner}/${RepoName}'
-                BranchName: !Ref RepoBranch
-                OutputArtifactFormat: CODE_ZIP
               OutputArtifacts:
-                - Name: SourceOutput
+                - Name: SourceArtifact
+              Configuration:
+                Owner: !Ref GitHubOwner
+                Repo: !Ref GitHubRepo
+                Branch: !Ref GitHubBranch
+                OAuthToken: !Ref GitHubToken
 
+        #####################################
+        # Build Stage
+        #####################################
         - Name: Build
           Actions:
             - Name: BuildAction
@@ -110,13 +150,15 @@ Resources:
                 Provider: CodeBuild
                 Version: 1
               InputArtifacts:
-                - Name: SourceOutput
+                - Name: SourceArtifact
               OutputArtifacts:
-                - Name: BuildOutput
+                - Name: BuildArtifact
               Configuration:
                 ProjectName: !Ref CodeBuildProject
-              Region: us-east-1
 
+        #####################################
+        # Deploy to Dev (using Secrets Manager)
+        #####################################
         - Name: DeployDev
           Actions:
             - Name: DeployDevStack
@@ -125,16 +167,21 @@ Resources:
                 Owner: AWS
                 Provider: CloudFormation
                 Version: 1
+              InputArtifacts:
+                - Name: SourceArtifact
               Configuration:
                 ActionMode: CREATE_UPDATE
-                StackName: dev-3tier-stack
+                StackName: !Sub "${ProjectName}-dev"
+                TemplatePath: SourceArtifact::templates/db.yaml
                 Capabilities: CAPABILITY_IAM
-                TemplatePath: BuildOutput::templates/app.yaml
-                RoleArn: !GetAtt CodePipelineRole.Arn
-              InputArtifacts:
-                - Name: BuildOutput
-              Region: us-east-1
+                ParameterOverrides: |
+                  {
+                    "EnvName": "DEV"
+                  }
 
+        #####################################
+        # Manual Approval before Prod
+        #####################################
         - Name: ManualApproval
           Actions:
             - Name: ApproveBeforeProd
@@ -144,6 +191,9 @@ Resources:
                 Provider: Manual
                 Version: 1
 
+        #####################################
+        # Deploy to Prod
+        #####################################
         - Name: DeployProd
           Actions:
             - Name: DeployProdStack
@@ -152,20 +202,14 @@ Resources:
                 Owner: AWS
                 Provider: CloudFormation
                 Version: 1
+              InputArtifacts:
+                - Name: SourceArtifact
               Configuration:
                 ActionMode: CREATE_UPDATE
-                StackName: prod-3tier-stack
+                StackName: !Sub "${ProjectName}-prod"
+                TemplatePath: SourceArtifact::templates/db.yaml
                 Capabilities: CAPABILITY_IAM
-                TemplatePath: BuildOutput::templates/app.yaml
-                RoleArn: !GetAtt CodePipelineRole.Arn
-              InputArtifacts:
-                - Name: BuildOutput
-              Region: us-west-2
-
-Outputs:
-  PipelineName:
-    Description: Name of the created CodePipeline.
-    Value: !Ref CodePipeline
-  BuildProject:
-    Description: CodeBuild project used in the pipeline.
-    Value: !Ref CodeBuildProject
+                ParameterOverrides: |
+                  {
+                    "EnvName": "PROD"
+                  }
