@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: CI/CD Pipeline for 3-tier CloudFormation app using Secrets Manager
+Description: Full CI/CD Pipeline for 3-tier CloudFormation app using Secrets Manager (VPC → DB → APP)
 
 Parameters:
   GitHubOwner:
@@ -20,7 +20,7 @@ Parameters:
 
 Resources:
   #############################################
-  # S3 bucket for pipeline artifacts
+  # S3 Bucket for Artifacts
   #############################################
   ArtifactBucket:
     Type: AWS::S3::Bucket
@@ -157,22 +157,45 @@ Resources:
                 ProjectName: !Ref CodeBuildProject
 
         #####################################
-        # Deploy to Dev (using Secrets Manager)
+        # Deploy VPC Stack
         #####################################
-        - Name: DeployDev
+        - Name: DeployVPC
           Actions:
-            - Name: DeployDevStack
+            - Name: DeployVPCStack
               ActionTypeId:
                 Category: Deploy
                 Owner: AWS
                 Provider: CloudFormation
                 Version: 1
               InputArtifacts:
-                - Name: BuildArtifact   # ✅ fixed from SourceArtifact
+                - Name: BuildArtifact
               Configuration:
                 ActionMode: CREATE_UPDATE
-                StackName: !Sub "${ProjectName}-dev"
-                TemplatePath: BuildArtifact::templates/db.yaml  # ✅ fixed from SourceArtifact
+                StackName: !Sub "${ProjectName}-vpc"
+                TemplatePath: BuildArtifact::vpc.yaml
+                Capabilities: CAPABILITY_IAM
+                ParameterOverrides: |
+                  {
+                    "EnvName": "DEV"
+                  }
+
+        #####################################
+        # Deploy DB Stack (depends on VPC)
+        #####################################
+        - Name: DeployDB
+          Actions:
+            - Name: DeployDBStack
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              InputArtifacts:
+                - Name: BuildArtifact
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Sub "${ProjectName}-db"
+                TemplatePath: BuildArtifact::db.yaml
                 Capabilities: CAPABILITY_IAM
                 ParameterOverrides: |
                   {
@@ -192,24 +215,24 @@ Resources:
                 Version: 1
 
         #####################################
-        # Deploy to Prod
+        # Deploy APP Stack
         #####################################
-        - Name: DeployProd
+        - Name: DeployApp
           Actions:
-            - Name: DeployProdStack
+            - Name: DeployAppStack
               ActionTypeId:
                 Category: Deploy
                 Owner: AWS
                 Provider: CloudFormation
                 Version: 1
               InputArtifacts:
-                - Name: BuildArtifact   # ✅ fixed
+                - Name: BuildArtifact
               Configuration:
                 ActionMode: CREATE_UPDATE
-                StackName: !Sub "${ProjectName}-prod"
-                TemplatePath: BuildArtifact::templates/db.yaml  # ✅ fixed
+                StackName: !Sub "${ProjectName}-app"
+                TemplatePath: BuildArtifact::app.yaml
                 Capabilities: CAPABILITY_IAM
                 ParameterOverrides: |
                   {
-                    "EnvName": "PROD"
+                    "EnvName": "DEV"
                   }

@@ -11,7 +11,7 @@ phases:
 
   pre_build:
     commands:
-      - echo "Running CloudFormation Lint..."
+      - echo "Running CloudFormation Linter..."
       - cfn-lint templates/*.yaml || true
       - echo "Linting complete."
 
@@ -22,12 +22,12 @@ phases:
           echo "Validating $template";
           aws cloudformation validate-template --template-body file://$template || exit 1;
         done
-      - echo "Template validation complete."
+      - echo "All templates validated successfully."
 
   post_build:
     commands:
-      - echo "All validations completed successfully."
-      - echo "Ready for deployment."
+      - echo "Build completed successfully."
+      - echo "Preparing artifacts for deployment..."
 
 artifacts:
   files:
