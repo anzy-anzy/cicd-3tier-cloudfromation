@@ -4,7 +4,13 @@ Description: App EC2 instance inside VPC, connected to RDS (3-tier CI/CD project
 Parameters:
   EnvName:
     Type: String
-    AllowedValues: [DEV, PROD]
+    AllowedValues:
+      - DEV
+      - PROD
+
+  LatestAmiId:
+    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
+    Default: "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64"
 
 Resources:
   AppSecurityGroup:
@@ -31,7 +37,12 @@ Resources:
     Properties:
       ImageId: !Ref LatestAmiId
       InstanceType: t3.micro
-      SubnetId: !Select [0, !Split [",", !ImportValue '${EnvName}-PubSubnets']]
+      SubnetId: !Select
+        - 0
+        - !Split
+          - ","
+          - !ImportValue
+            !Sub "${EnvName}-PubSubnets"
       SecurityGroupIds:
         - !Ref AppSecurityGroup
       KeyName: mykeypair
@@ -40,15 +51,12 @@ Resources:
           #!/bin/bash
           yum update -y
           amazon-linux-extras install -y nginx1
+          systemctl enable nginx
           systemctl start nginx
           echo "<h1>${EnvName} Web App connected to DB: $(aws secretsmanager get-secret-value --secret-id myapp/dbcredentials --query SecretString --output text)</h1>" > /usr/share/nginx/html/index.html
       Tags:
         - Key: Name
           Value: !Sub '${EnvName}-app-instance'
-
-  LatestAmiId:
-    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
-    Default: "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64"
 
 Outputs:
   AppInstanceId:

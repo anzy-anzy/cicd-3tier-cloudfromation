@@ -4,7 +4,9 @@ Description: VPC setup for 3-tier CI/CD project
 Parameters:
   EnvName:
     Type: String
-    AllowedValues: [DEV, PROD]
+    AllowedValues:
+      - DEV
+      - PROD
 
 Resources:
   VPC:

@@ -4,7 +4,10 @@ Description: RDS MySQL in private subnets for 3-tier CI/CD project (using Secret
 Parameters:
   EnvName:
     Type: String
-    AllowedValues: [DEV, PROD]
+    AllowedValues:
+      - DEV
+      - PROD
+
   DBName:
     Type: String
     Default: appdb
