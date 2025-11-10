@@ -1,40 +1,246 @@
-version: 0.2
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Full CI/CD Pipeline for 3-tier CloudFormation app using Secrets Manager (VPC → DB → APP)
 
-phases:
-  install:
-    runtime-versions:
-      python: 3.12
-    commands:
-      - echo "Installing dependencies..."
-      - pip install --upgrade pip
-      - pip install cfn-lint boto3 awscli
+Parameters:
+  GitHubOwner:
+    Type: String
+    Default: anzy-anzy
+  GitHubRepo:
+    Type: String
+    Default: cicd-3tier-cloudformation
+  GitHubBranch:
+    Type: String
+    Default: main
+  GitHubToken:
+    Type: String
+    NoEcho: true
+  ProjectName:
+    Type: String
+    Default: cicd-pipeline-stack
 
-  pre_build:
-    commands:
-      - echo "Running CloudFormation Linter..."
-      - cfn-lint templates/*.yaml || true
-      - echo "Linting complete."
+Resources:
+  #############################################
+  # S3 Bucket for Artifacts
+  #############################################
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
 
-  build:
-    commands:
-      - echo "Validating CloudFormation templates..."
-      - for template in templates/*.yaml; do
-          if [ -f "$template" ]; then
-            echo "Validating $template";
-            aws cloudformation validate-template --template-body file://$template || exit 1;
-          fi;
-        done
-      - echo "All templates validated successfully."
+  #############################################
+  # IAM Role for CodePipeline
+  #############################################
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-CodePipelineRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodePipelineFullAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:*
+                  - codebuild:*
+                  - cloudformation:*
+                  - iam:PassRole
+                  - secretsmanager:GetSecretValue
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource: "*"
 
-  post_build:
-    commands:
-      - echo "Preparing artifacts for deployment..."
-      - mkdir -p output
-      - cp -r templates/*.yaml output/
-      - echo "Build completed successfully."
+  #############################################
+  # IAM Role for CodeBuild
+  #############################################
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-CodeBuildRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildInlinePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:*
+                  - s3:*
+                  - cloudformation:ValidateTemplate
+                  - secretsmanager:GetSecretValue
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource: "*"
 
-artifacts:
-  files:
-    - '*.yaml'
-  base-directory: output
-  discard-paths: yes
+  #############################################
+  # CodeBuild Project
+  #############################################
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${ProjectName}-build"
+      Description: "Lint and validate CloudFormation templates"
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        Type: LINUX_CONTAINER
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec.yml
+      TimeoutInMinutes: 15
+
+  #############################################
+  # CodePipeline Definition
+  #############################################
+  CICDPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub "${ProjectName}-pipeline-v2"
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Stages:
+        #####################################
+        # Source Stage
+        #####################################
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Provider: GitHub
+                Version: 1
+              OutputArtifacts:
+                - Name: SourceArtifact
+              Configuration:
+                Owner: !Ref GitHubOwner
+                Repo: !Ref GitHubRepo
+                Branch: !Ref GitHubBranch
+                OAuthToken: !Ref GitHubToken
+
+        #####################################
+        # Build Stage
+        #####################################
+        - Name: Build
+          Actions:
+            - Name: BuildAction
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: 1
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: BuildArtifact
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+
+        #####################################
+        # Deploy VPC Stack
+        #####################################
+        - Name: DeployVPC
+          Actions:
+            - Name: DeployVPCStack
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              InputArtifacts:
+                - Name: BuildArtifact
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Sub "${ProjectName}-vpc"
+                TemplatePath: BuildArtifact::vpc.yaml
+                Capabilities: CAPABILITY_IAM
+                RoleArn: !GetAtt CodePipelineRole.Arn
+                ParameterOverrides: |
+                  {
+                    "EnvName": "DEV"
+                  }
+
+        #####################################
+        # Deploy DB Stack
+        #####################################
+        - Name: DeployDB
+          Actions:
+            - Name: DeployDBStack
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              InputArtifacts:
+                - Name: BuildArtifact
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Sub "${ProjectName}-db"
+                TemplatePath: BuildArtifact::db.yaml
+                Capabilities: CAPABILITY_IAM
+                RoleArn: !GetAtt CodePipelineRole.Arn
+                ParameterOverrides: |
+                  {
+                    "EnvName": "DEV"
+                  }
+
+        #####################################
+        # Manual Approval
+        #####################################
+        - Name: ManualApproval
+          Actions:
+            - Name: ApproveBeforeProd
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: 1
+
+        #####################################
+        # Deploy APP Stack
+        #####################################
+        - Name: DeployApp
+          Actions:
+            - Name: DeployAppStack
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              InputArtifacts:
+                - Name: BuildArtifact
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Sub "${ProjectName}-app"
+                TemplatePath: BuildArtifact::app.yaml
+                Capabilities: CAPABILITY_IAM
+                RoleArn: !GetAtt CodePipelineRole.Arn
+                ParameterOverrides: |
+                  {
+                    "EnvName": "DEV"
+                  }
+
+Outputs:
+  PipelineName:
+    Description: The name of the CodePipeline
+    Value: !Ref CICDPipeline
