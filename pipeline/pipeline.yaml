@@ -174,6 +174,7 @@ Resources:
                 StackName: !Sub "${ProjectName}-vpc"
                 TemplatePath: BuildArtifact::templates/vpc.yaml
                 Capabilities: CAPABILITY_IAM
+                RoleArn: !GetAtt CodePipelineRole.Arn
                 ParameterOverrides: |
                   {
                     "EnvName": "DEV"
@@ -197,6 +198,7 @@ Resources:
                 StackName: !Sub "${ProjectName}-db"
                 TemplatePath: BuildArtifact::templates/db.yaml
                 Capabilities: CAPABILITY_IAM
+                RoleArn: !GetAtt CodePipelineRole.Arn
                 ParameterOverrides: |
                   {
                     "EnvName": "DEV"
@@ -232,6 +234,7 @@ Resources:
                 StackName: !Sub "${ProjectName}-app"
                 TemplatePath: BuildArtifact::templates/app.yaml
                 Capabilities: CAPABILITY_IAM
+                RoleArn: !GetAtt CodePipelineRole.Arn
                 ParameterOverrides: |
                   {
                     "EnvName": "DEV"
