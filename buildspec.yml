@@ -35,6 +35,6 @@ phases:
 
 artifacts:
   files:
-    - output/*.yaml
+    - '*.yaml'
   base-directory: output
   discard-paths: yes
