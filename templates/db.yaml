@@ -1,5 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: RDS MySQL in private subnets for 3-tier CI/CD project (using Secrets Manager)
+Description: >
+  RDS MySQL in private subnets for 3-tier CI/CD project (using Secrets Manager)
 
 Parameters:
   EnvName:
@@ -7,12 +8,17 @@ Parameters:
     AllowedValues:
       - DEV
       - PROD
+    Description: Environment name (e.g., DEV, PROD)
 
   DBName:
     Type: String
     Default: appdb
+    Description: The name of the database to create
 
 Resources:
+  # --------------------------------------------------------
+  # Security Group for RDS
+  # --------------------------------------------------------
   DbSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -23,11 +29,15 @@ Resources:
         - IpProtocol: tcp
           FromPort: 3306
           ToPort: 3306
-          CidrIp: 10.20.0.0/16
+          SourceSecurityGroupId: !ImportValue
+            Fn::Sub: '${EnvName}-AppSecurityGroupId'
       Tags:
         - Key: Name
           Value: !Sub '${EnvName}-db-sg'
 
+  # --------------------------------------------------------
+  # Subnet Group for RDS (Private Subnets)
+  # --------------------------------------------------------
   DBSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
@@ -35,11 +45,14 @@ Resources:
       SubnetIds: !Split
         - ","
         - !ImportValue
-          Fn::Sub: '${EnvName}-PrivSubnets'
+          Fn::Sub: '${EnvName}-PrivateSubnets'
       Tags:
         - Key: Name
           Value: !Sub '${EnvName}-db-subnet-group'
 
+  # --------------------------------------------------------
+  # RDS Database Instance (using Secrets Manager for creds)
+  # --------------------------------------------------------
   MyDBInstance:
     Type: AWS::RDS::DBInstance
     Properties:
@@ -57,8 +70,8 @@ Resources:
       MultiAZ: false
       PubliclyAccessible: false
       DeletionProtection: false
-      StorageType: gp2
       BackupRetentionPeriod: 1
+      StorageType: gp2
       Tags:
         - Key: Name
           Value: !Sub '${EnvName}-mysql-db'

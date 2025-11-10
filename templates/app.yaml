@@ -1,68 +1,91 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: App EC2 instance inside VPC, connected to RDS (3-tier CI/CD project)
+Description: >
+  EC2 Application Stack for 3-tier CI/CD Project.
+  Launches EC2 instances in public subnets, connects to RDS, and uses security groups.
 
 Parameters:
   EnvName:
     Type: String
-    AllowedValues:
-      - DEV
-      - PROD
+    Default: DEV
+    Description: Environment name (e.g., DEV, TEST, PROD)
 
-  LatestAmiId:
-    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
-    Default: "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64"
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    Description: EC2 instance type for the app servers
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: mykeypair   # <-- Update this to match your EC2 Key Pair name
+    Description: EC2 Key Pair name for SSH access
+
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Default: ami-06dd5c911c0d8dcdc
+    Description: Amazon Linux 2 AMI (update if needed for your region)
 
 Resources:
+  # --------------------------------------------------------
+  # Security Group for EC2 Instances
+  # --------------------------------------------------------
   AppSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow HTTP and DB access
+      GroupDescription: Allow HTTP and SSH
       VpcId: !ImportValue
         Fn::Sub: "${EnvName}-VpcId"
       SecurityGroupIngress:
         - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
           CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 3306
-          ToPort: 3306
-          CidrIp: 10.20.0.0/16
       Tags:
         - Key: Name
-          Value: !Sub "${EnvName}-app-sg"
+          Value: !Sub "${EnvName}-AppSecurityGroup"
 
+  # --------------------------------------------------------
+  # EC2 Instance for Application Tier
+  # --------------------------------------------------------
   AppInstance:
     Type: AWS::EC2::Instance
     Properties:
-      ImageId: !Ref LatestAmiId
-      InstanceType: t3.micro
-      SubnetId: !Select 
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref AmiId
+      KeyName: !Ref KeyName
+      SubnetId: !Select
         - 0
-        - !Split 
+        - !Split
           - ","
-          - !ImportValue 
-              Fn::Sub: "${EnvName}-PubSubnets"
+          - !ImportValue
+              Fn::Sub: "${EnvName}-PublicSubnets"
       SecurityGroupIds:
         - !Ref AppSecurityGroup
-      KeyName: mykeypair
-      UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash
-          yum update -y
-          amazon-linux-extras install -y nginx1
-          systemctl enable nginx
-          systemctl start nginx
-          echo "<h1>${EnvName} Web App connected to DB: $(aws secretsmanager get-secret-value --secret-id myapp/dbcredentials --query SecretString --output text)</h1>" > /usr/share/nginx/html/index.html
       Tags:
         - Key: Name
-          Value: !Sub "${EnvName}-app-instance"
+          Value: !Sub "${EnvName}-AppServer"
 
 Outputs:
   AppInstanceId:
-    Description: EC2 instance ID
+    Description: EC2 Instance ID
     Value: !Ref AppInstance
+    Export:
+      Name: !Sub "${EnvName}-AppInstanceId"
 
-  AppPublicIP:
-    Description: Public IP of the app instance
-    Value: !GetAtt AppInstance.PublicIp
+  AppSecurityGroupId:
+    Description: Security Group ID for App Server
+    Value: !Ref AppSecurityGroup
+    Export:
+      Name: !Sub "${EnvName}-AppSecurityGroupId"
+
+  PublicSubnetUsed:
+    Description: The subnet where EC2 was launched
+    Value: !Select
+      - 0
+      - !Split
+        - ","
+        - !ImportValue
+            Fn::Sub: "${EnvName}-PublicSubnets"
