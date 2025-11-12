@@ -208,6 +208,7 @@ Resources:
               Region: us-east-1
               Configuration:
                 ActionMode: CREATE_UPDATE
+                RoleArn: !GetAtt CodePipelineRole.Arn
                 StackName: dev-db-stack
                 TemplatePath: BuildArtifact::templates/db.yaml
                 Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
@@ -224,6 +225,7 @@ Resources:
               Region: us-east-1
               Configuration:
                 ActionMode: CREATE_UPDATE
+                RoleArn: !GetAtt CodePipelineRole.Arn
                 StackName: dev-app-stack
                 TemplatePath: BuildArtifact::templates/app.yaml
                 Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
@@ -251,6 +253,7 @@ Resources:
               Region: us-west-2
               Configuration:
                 ActionMode: CREATE_UPDATE
+                RoleArn: !GetAtt CodePipelineRole.Arn
                 StackName: prod-db-stack
                 TemplatePath: BuildArtifact::templates/db.yaml
                 Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
@@ -267,6 +270,7 @@ Resources:
               Region: us-west-2
               Configuration:
                 ActionMode: CREATE_UPDATE
+                RoleArn: !GetAtt CodePipelineRole.Arn
                 StackName: prod-app-stack
                 TemplatePath: BuildArtifact::templates/app.yaml
                 Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
