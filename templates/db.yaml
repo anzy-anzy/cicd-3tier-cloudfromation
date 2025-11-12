@@ -56,7 +56,7 @@ Resources:
   MyDBInstance:
     Type: AWS::RDS::DBInstance
     Properties:
-      DBInstanceIdentifier: !Sub '${EnvName}-mysql-db'
+      DBInstanceIdentifier: !Sub '${EnvName}-mysql-db-v2'
       AllocatedStorage: 20
       DBInstanceClass: db.t3.micro
       Engine: mysql

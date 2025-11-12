@@ -1,5 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Full CI/CD Pipeline for 3-tier CloudFormation app (using existing custom VPC)
+Description: >
+  Multi-region CI/CD Pipeline for 3-tier CloudFormation app
+  (Dev in us-east-1, Prod in us-west-2)
 
 Parameters:
   GitHubOwner:
@@ -20,10 +22,18 @@ Parameters:
 
 Resources:
   #############################################
-  # S3 Bucket for Artifacts
+  # S3 Buckets for Artifacts (auto-unique)
   #############################################
-  ArtifactBucket:
+  ArtifactBucketEast:
     Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::AccountId}-${ProjectName}-us-east-1-artifacts'
+    DeletionPolicy: Retain
+
+  ArtifactBucketWest:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::AccountId}-${ProjectName}-us-west-2-artifacts'
     DeletionPolicy: Retain
 
   #############################################
@@ -52,6 +62,7 @@ Resources:
                   - s3:*
                   - codebuild:*
                   - cloudformation:*
+                  - cloudformation:DescribeStacks
                   - iam:PassRole
                   - secretsmanager:GetSecretValue
                   - ssm:GetParameter
@@ -118,15 +129,18 @@ Resources:
   #############################################
   CICDPipeline:
     Type: AWS::CodePipeline::Pipeline
-    DependsOn:
-      - CodePipelineRole
-      - CodeBuildRole
     Properties:
-      Name: !Sub "${ProjectName}-pipeline-v2"
+      Name: !Sub "${ProjectName}-multi-region-pipeline"
       RoleArn: !GetAtt CodePipelineRole.Arn
-      ArtifactStore:
-        Type: S3
-        Location: !Ref ArtifactBucket
+      ArtifactStores:
+        - Region: us-east-1
+          ArtifactStore:
+            Type: S3
+            Location: !Ref ArtifactBucketEast
+        - Region: us-west-2
+          ArtifactStore:
+            Type: S3
+            Location: !Ref ArtifactBucketWest
       Stages:
         #####################################
         # Source Stage
@@ -166,11 +180,11 @@ Resources:
                 ProjectName: !Ref CodeBuildProject
 
         #####################################
-        # Deploy DB Stack
+        # Deploy DEV (us-east-1)
         #####################################
-        - Name: DeployDB
+        - Name: DeployDev
           Actions:
-            - Name: DeployDBStack
+            - Name: DeployDBDev
               ActionTypeId:
                 Category: Deploy
                 Owner: AWS
@@ -178,23 +192,38 @@ Resources:
                 Version: 1
               InputArtifacts:
                 - Name: BuildArtifact
+              Region: us-east-1
               Configuration:
                 ActionMode: CREATE_UPDATE
-                StackName: db-stack
+                StackName: dev-db-stack
                 TemplatePath: BuildArtifact::templates/db.yaml
-                Capabilities: CAPABILITY_IAM
-                RoleArn: !GetAtt CodePipelineRole.Arn
+                Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
                 ParameterOverrides: |
-                  {
-                    "EnvName": "DEV"
-                  }
+                  {"EnvName": "DEV"}
+
+            - Name: DeployAppDev
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              InputArtifacts:
+                - Name: BuildArtifact
+              Region: us-east-1
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: dev-app-stack
+                TemplatePath: BuildArtifact::templates/app.yaml
+                Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
+                ParameterOverrides: |
+                  {"EnvName": "DEV"}
 
         #####################################
         # Manual Approval
         #####################################
         - Name: ManualApproval
           Actions:
-            - Name: ApproveBeforeProd
+            - Name: ApproveForProd
               ActionTypeId:
                 Category: Approval
                 Owner: AWS
@@ -202,11 +231,11 @@ Resources:
                 Version: 1
 
         #####################################
-        # Deploy APP Stack
+        # Deploy PROD (us-west-2)
         #####################################
-        - Name: DeployApp
+        - Name: DeployProd
           Actions:
-            - Name: DeployAppStack
+            - Name: DeployDBProd
               ActionTypeId:
                 Category: Deploy
                 Owner: AWS
@@ -214,18 +243,33 @@ Resources:
                 Version: 1
               InputArtifacts:
                 - Name: BuildArtifact
+              Region: us-west-2
               Configuration:
                 ActionMode: CREATE_UPDATE
-                StackName: app-stack
-                TemplatePath: BuildArtifact::templates/app.yaml
-                Capabilities: CAPABILITY_IAM
-                RoleArn: !GetAtt CodePipelineRole.Arn
+                StackName: prod-db-stack
+                TemplatePath: BuildArtifact::templates/db.yaml
+                Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
                 ParameterOverrides: |
-                  {
-                    "EnvName": "DEV"
-                  }
+                  {"EnvName": "PROD"}
+
+            - Name: DeployAppProd
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              InputArtifacts:
+                - Name: BuildArtifact
+              Region: us-west-2
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: prod-app-stack
+                TemplatePath: BuildArtifact::templates/app.yaml
+                Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
+                ParameterOverrides: |
+                  {"EnvName": "PROD"}
 
 Outputs:
   PipelineName:
-    Description: The name of the CodePipeline
+    Description: Name of the pipeline
     Value: !Ref CICDPipeline

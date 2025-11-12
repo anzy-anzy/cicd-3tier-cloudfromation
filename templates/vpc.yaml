@@ -1,5 +1,18 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Full 3-tier VPC with public/private subnets, IGW, NAT Gateway, and route tables
+Description: >
+  Multi-Region 3-tier VPC with public/private subnets, Internet Gateway,
+  NAT Gateway, and route tables. Compatible with us-east-1 (DEV) and us-west-2 (PROD).
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Environment Configuration"
+        Parameters:
+          - EnvName
+    ParameterLabels:
+      EnvName:
+        default: "Environment Name"
 
 Parameters:
   EnvName:
@@ -8,6 +21,7 @@ Parameters:
       - DEV
       - PROD
     Default: DEV
+    Description: Environment name to prefix all resources (DEV or PROD)
 
 Resources:
   # ----------------------------------------------------------
@@ -87,16 +101,13 @@ Resources:
           Value: !Sub '${EnvName}-private-subnet-2'
 
   # ----------------------------------------------------------
-  # Elastic IP for NAT Gateway
+  # Elastic IP and NAT Gateway
   # ----------------------------------------------------------
   NatEIP:
     Type: AWS::EC2::EIP
     Properties:
       Domain: vpc
 
-  # ----------------------------------------------------------
-  # NAT Gateway (for private subnets outbound internet)
-  # ----------------------------------------------------------
   NatGateway:
     Type: AWS::EC2::NatGateway
     Properties:
@@ -189,6 +200,10 @@ Resources:
 # Outputs
 # ----------------------------------------------------------
 Outputs:
+  Region:
+    Description: The AWS region where this VPC is deployed
+    Value: !Ref AWS::Region
+
   VpcId:
     Description: The ID of the created VPC
     Value: !Ref VPC
