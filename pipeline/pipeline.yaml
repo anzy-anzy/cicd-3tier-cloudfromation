@@ -20,20 +20,37 @@ Parameters:
     Type: String
     Default: cicd-pipeline-stack
 
-  # NEW: pass the us-west-2 artifact bucket name that already exists in us-west-2
+  # New: optional, pass existing artifact bucket names to reuse
+  ArtifactBucketEastName:
+    Type: String
+    Default: ""
+    Description: "(optional) Existing S3 bucket name in us-east-1 for CodePipeline artifacts"
   ArtifactBucketWestName:
     Type: String
-    Description: Name of the *existing* S3 bucket in us-west-2 to use for cross-region artifacts (must physically live in us-west-2)
+    Default: ""
+    Description: "(optional) Existing S3 bucket name in us-west-2 for CodePipeline artifacts"
+
+Conditions:
+  CreateEastBucket: !Equals [!Ref ArtifactBucketEastName, ""]
+  CreateWestBucket: !Equals [!Ref ArtifactBucketWestName, ""]
 
 Resources:
   #############################################
-  # S3 Bucket for Artifacts (east only; created by this stack)
+  # S3 Buckets for Artifacts (only if needed)
   #############################################
   ArtifactBucketEast:
     Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub '${AWS::AccountId}-${ProjectName}-us-east-1-artifacts'
+    Condition: CreateEastBucket
     DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties: {}  # let CFN pick a unique name
+
+  ArtifactBucketWest:
+    Type: AWS::S3::Bucket
+    Condition: CreateWestBucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties: {}  # let CFN pick a unique name
 
   #############################################
   # IAM Role for CodePipeline
@@ -135,12 +152,17 @@ Resources:
         - Region: us-east-1
           ArtifactStore:
             Type: S3
-            Location: !Ref ArtifactBucketEast
+            Location: !If
+              - CreateEastBucket
+              - !Ref ArtifactBucketEast
+              - !Ref ArtifactBucketEastName
         - Region: us-west-2
           ArtifactStore:
             Type: S3
-            # Use the pre-existing bucket in us-west-2
-            Location: !Ref ArtifactBucketWestName
+            Location: !If
+              - CreateWestBucket
+              - !Ref ArtifactBucketWest
+              - !Ref ArtifactBucketWestName
       Stages:
         - Name: Source
           Actions:
