@@ -206,7 +206,7 @@ Resources:
               Configuration:
                 ActionMode: CREATE_UPDATE
                 RoleArn: !GetAtt CodePipelineRole.Arn
-                StackName: dev-db-stack
+                StackName: db-stack-dev
                 TemplatePath: BuildArtifact::templates/db.yaml
                 Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
                 ParameterOverrides: '{"EnvName":"DEV"}'
@@ -223,7 +223,7 @@ Resources:
               Configuration:
                 ActionMode: CREATE_UPDATE
                 RoleArn: !GetAtt CodePipelineRole.Arn
-                StackName: dev-app-stack
+                StackName: app-stack-dev
                 TemplatePath: BuildArtifact::templates/app.yaml
                 Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
                 ParameterOverrides: '{"EnvName":"DEV"}'
