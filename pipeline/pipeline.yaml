@@ -215,29 +215,13 @@ Resources:
               Configuration:
                 ProjectName: !Ref CodeBuildProject
 
-        #######################
+        ###############################
         # DEPLOY DEV (us-east-1)
-        #######################
+        ###############################
         - Name: DeployDev
           Actions:
 
-            - Name: DeployDBDev
-              ActionTypeId:
-                Category: Deploy
-                Owner: AWS
-                Provider: CloudFormation
-                Version: 1
-              InputArtifacts:
-                - Name: BuildArtifact
-              Region: us-east-1
-              Configuration:
-                ActionMode: CREATE_UPDATE
-                RoleArn: !GetAtt CodePipelineRole.Arn
-                StackName: db-stack-dev
-                TemplatePath: BuildArtifact::templates/db.yaml
-                Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
-                ParameterOverrides: '{"EnvName":"DEV"}'
-
+            # Deploy APP FIRST
             - Name: DeployAppDev
               ActionTypeId:
                 Category: Deploy
@@ -254,6 +238,26 @@ Resources:
                 TemplatePath: BuildArtifact::templates/app.yaml
                 Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
                 ParameterOverrides: '{"EnvName":"DEV"}'
+              RunOrder: 1
+
+            # Deploy DB SECOND
+            - Name: DeployDBDev
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              InputArtifacts:
+                - Name: BuildArtifact
+              Region: us-east-1
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                RoleArn: !GetAtt CodePipelineRole.Arn
+                StackName: db-stack-dev
+                TemplatePath: BuildArtifact::templates/db.yaml
+                Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
+                ParameterOverrides: '{"EnvName":"DEV"}'
+              RunOrder: 2
 
         #######################
         # MANUAL APPROVAL
@@ -267,29 +271,13 @@ Resources:
                 Provider: Manual
                 Version: 1
 
-        #######################
+        ###############################
         # DEPLOY PROD (us-west-2)
-        #######################
+        ###############################
         - Name: DeployProd
           Actions:
 
-            - Name: DeployDBProd
-              ActionTypeId:
-                Category: Deploy
-                Owner: AWS
-                Provider: CloudFormation
-                Version: 1
-              InputArtifacts:
-                - Name: BuildArtifact
-              Region: us-west-2
-              Configuration:
-                ActionMode: CREATE_UPDATE
-                RoleArn: !GetAtt CodePipelineRole.Arn
-                StackName: db-stack-prod
-                TemplatePath: BuildArtifact::templates/db.yaml
-                Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
-                ParameterOverrides: '{"EnvName":"PROD"}'
-
+            # APP FIRST
             - Name: DeployAppProd
               ActionTypeId:
                 Category: Deploy
@@ -306,6 +294,26 @@ Resources:
                 TemplatePath: BuildArtifact::templates/app.yaml
                 Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
                 ParameterOverrides: '{"EnvName":"PROD"}'
+              RunOrder: 1
+
+            # DB SECOND
+            - Name: DeployDBProd
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              InputArtifacts:
+                - Name: BuildArtifact
+              Region: us-west-2
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                RoleArn: !GetAtt CodePipelineRole.Arn
+                StackName: db-stack-prod
+                TemplatePath: BuildArtifact::templates/db.yaml
+                Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
+                ParameterOverrides: '{"EnvName":"PROD"}'
+              RunOrder: 2
 
 Outputs:
   PipelineName:

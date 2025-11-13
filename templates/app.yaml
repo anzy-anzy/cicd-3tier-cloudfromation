@@ -1,13 +1,13 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   EC2 Application Stack for 3-tier CI/CD Project.
-  Launches EC2 instances in public subnets, connects to RDS, and uses security groups.
+  Deploys EC2, installs Apache, and loads webpage from GitHub repo.
 
 Parameters:
   EnvName:
     Type: String
     Default: DEV
-    Description: Environment name (e.g., DEV, TEST, PROD)
+    Description: Environment name (DEV, TEST, PROD)
 
   InstanceType:
     Type: String
@@ -20,7 +20,7 @@ Parameters:
   AmiId:
     Type: String
     Default: ""
-    Description: "Leave empty — automatic AMI mapping will select correct AMI"
+    Description: "Optional — leave empty to auto-select AMI based on region"
 
   ForceUpdate:
     Type: String
@@ -82,19 +82,31 @@ Resources:
         - !Ref AppSecurityGroup
 
       ##############################################
-      # UserData: installs Apache & deploys webpage
+      # UserData: Deploy real website from GitHub
       ##############################################
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash
           yum update -y
-          yum install -y httpd
+
+          # Install Apache + Git
+          yum install -y httpd git
 
           systemctl start httpd
           systemctl enable httpd
 
-          # Simple default page
-          echo "<h1>Welcome to ${EnvName} Application Server!</h1>" > /var/www/html/index.html
+          # Clone the repo
+          cd /tmp
+          git clone https://github.com/anzy-anzy/cicd-3tier-cloudformation.git
+
+          # Copy the actual index file
+          cp /tmp/cicd-3tier-cloudformation/app/index.template.html /var/www/html/index.html
+
+          # Set permissions
+          chmod 644 /var/www/html/index.html
+
+          # Restart Apache
+          systemctl restart httpd
 
       Tags:
         - Key: Name
