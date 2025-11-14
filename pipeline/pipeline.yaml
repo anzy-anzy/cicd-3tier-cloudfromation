@@ -20,6 +20,9 @@ Parameters:
 
 Resources:
 
+  ###################################################
+  # IAM Roles
+  ###################################################
   CodePipelineRole:
     Type: AWS::IAM::Role
     Properties:
@@ -40,6 +43,7 @@ Resources:
                   - s3:*
                   - codebuild:*
                   - cloudformation:*
+                  - iam:PassRole
                 Resource: "*"
 
   CodeBuildRole:
@@ -64,6 +68,9 @@ Resources:
                   - cloudformation:ValidateTemplate
                 Resource: "*"
 
+  ###################################################
+  # CodeBuild
+  ###################################################
   CodeBuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
@@ -79,6 +86,9 @@ Resources:
         Type: CODEPIPELINE
         BuildSpec: buildspec.yml
 
+  ###################################################
+  # CodePipeline
+  ###################################################
   CICDPipeline:
     Type: AWS::CodePipeline::Pipeline
     Properties:
@@ -91,7 +101,9 @@ Resources:
 
       Stages:
 
-        ## SOURCE STAGE
+        ###################################################
+        # SOURCE STAGE
+        ###################################################
         - Name: Source
           Actions:
             - Name: GitHubSource
@@ -108,7 +120,9 @@ Resources:
                 Branch: !Ref GitHubBranch
                 OAuthToken: !Ref GitHubToken
 
-        ## BUILD STAGE
+        ###################################################
+        # BUILD STAGE
+        ###################################################
         - Name: Build
           Actions:
             - Name: CodeBuildAction
@@ -123,6 +137,106 @@ Resources:
                 - Name: BuildArtifact
               Configuration:
                 ProjectName: !Ref CodeBuildProject
+
+        ###################################################
+        # DEPLOY DEV
+        ###################################################
+        - Name: DeployDev
+          Actions:
+            - Name: DeployAppDev
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              InputArtifacts:
+                - Name: BuildArtifact
+              Region: us-east-1
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: app-stack-dev
+                TemplatePath: BuildArtifact::templates/app.yaml
+                Capabilities: CAPABILITY_IAM
+                ParameterOverrides: |
+                  {
+                    "EnvName": "DEV",
+                    "ArtifactBucket": "436083576844-cicd-pipeline-stack-us-east-1-artifacts"
+                  }
+              RunOrder: 1
+
+            - Name: DeployDBDev
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              InputArtifacts:
+                - Name: BuildArtifact
+              Region: us-east-1
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: db-stack-dev
+                TemplatePath: BuildArtifact::templates/db.yaml
+                Capabilities: CAPABILITY_IAM
+                ParameterOverrides: |
+                  { "EnvName": "DEV" }
+              RunOrder: 2
+
+        ###################################################
+        # MANUAL APPROVAL
+        ###################################################
+        - Name: ManualApproval
+          Actions:
+            - Name: ApproveForProd
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: 1
+
+        ###################################################
+        # DEPLOY PROD
+        ###################################################
+        - Name: DeployProd
+          Actions:
+            - Name: DeployAppProd
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              InputArtifacts:
+                - Name: BuildArtifact
+              Region: us-west-2
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: app-stack-prod
+                TemplatePath: BuildArtifact::templates/app.yaml
+                Capabilities: CAPABILITY_IAM
+                ParameterOverrides: |
+                  {
+                    "EnvName": "PROD",
+                    "ArtifactBucket": "436083576844-cicd-pipeline-stack-us-west-2-artifacts-v2"
+                  }
+              RunOrder: 1
+
+            - Name: DeployDBProd
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              InputArtifacts:
+                - Name: BuildArtifact
+              Region: us-west-2
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: db-stack-prod
+                TemplatePath: BuildArtifact::templates/db.yaml
+                Capabilities: CAPABILITY_IAM
+                ParameterOverrides: |
+                  { "EnvName": "PROD" }
+              RunOrder: 2
 
 Outputs:
   PipelineName:
