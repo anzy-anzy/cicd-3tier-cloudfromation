@@ -41,7 +41,8 @@ Resources:
                   - s3:GetObject
                   - s3:PutObject
                   - s3:GetBucketLocation
-                Resource: "*"
+                Resource: "*"         #  change to a specific resource to enforce least privilege principle
+                
               - Effect: Allow
                 Action:
                   - codebuild:StartBuild
@@ -73,9 +74,9 @@ Resources:
             Statement:
               - Effect: Allow
                 Action:
-                  - s3:*
-                  - cloudformation:*
-                Resource: "*"
+                  - s3:*        #Limit to only needed actions GetObject because CodeBuild doesn't write to your bucket
+                  - cloudformation:*    #Again limit to the needed actions 
+                Resource: "*"     #Limit to the needed resources.
 
   ################################
   # CODEBUILD PROJECT
