@@ -20,7 +20,7 @@ phases:
       - echo "Preparing website artifact..."
       - mkdir -p output/app
       - cp app/index.html output/app/index.html
-      - echo "index.html prepared."
+      - echo "index.html copied to output/app/index.html"
 
   post_build:
     commands:
@@ -33,6 +33,4 @@ artifacts:
   files:
     - '**/*'
   base-directory: output
-  discard-paths: no
-
   discard-paths: no

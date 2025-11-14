@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   EC2 Application Stack for 3-tier CI/CD Project.
-  Deploys EC2 instance, installs Apache, pulls index.html from S3.
+  Deploys EC2 instance, installs Apache, pulls website files from S3.
 
 Parameters:
   EnvName:
@@ -22,7 +22,7 @@ Parameters:
 
   ArtifactBucket:
     Type: String
-    Description: "S3 bucket containing build artifacts (provided by pipeline)"
+    Description: "S3 bucket where CodePipeline stores build artifacts"
 
   ForceUpdate:
     Type: String
@@ -94,17 +94,15 @@ Resources:
           systemctl start httpd
           systemctl enable httpd
 
-          # Create directory
           mkdir -p /opt/app
 
-          # Download file from S3 artifact bucket
+          # Download website file from the CodePipeline artifact structure
           aws s3 cp s3://${ArtifactBucket}/app/index.html /opt/app/index.html
 
-          # Move to Apache directory
           cp /opt/app/index.html /var/www/html/index.html
           chmod 644 /var/www/html/index.html
 
-          echo "Deployment completed"
+          echo "Website deployed successfully"
 
       Tags:
         - Key: Name

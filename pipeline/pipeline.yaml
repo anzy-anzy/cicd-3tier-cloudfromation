@@ -1,7 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: >
-  Multi-region CI/CD Pipeline for 3-tier CloudFormation app
-  (Dev in us-east-1, Prod in us-west-2)
+Description: Multi-region CI/CD Pipeline for 3-tier CloudFormation app
 
 Parameters:
   GitHubOwner:
@@ -27,12 +25,10 @@ Parameters:
   ArtifactBucketEastName:
     Type: String
     Default: ""
-    Description: "Existing S3 bucket in us-east-1 for artifacts"
 
   ArtifactBucketWestName:
     Type: String
     Default: ""
-    Description: "Existing S3 bucket in us-west-2 for artifacts"
 
 Conditions:
   CreateEastBucket: !Equals [!Ref ArtifactBucketEastName, ""]
@@ -43,15 +39,16 @@ Resources:
   ArtifactBucketEast:
     Type: AWS::S3::Bucket
     Condition: CreateEastBucket
+    DeletionPolicy: Retain
 
   ArtifactBucketWest:
     Type: AWS::S3::Bucket
     Condition: CreateWestBucket
+    DeletionPolicy: Retain
 
   CodePipelineRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "${ProjectName}-CodePipelineRole"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -72,15 +69,11 @@ Resources:
                   - codebuild:*
                   - cloudformation:*
                   - iam:PassRole
-                  - secretsmanager:GetSecretValue
-                  - ssm:GetParameter
-                  - ec2:Describe*
                 Resource: "*"
 
   CodeBuildRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "${ProjectName}-CodeBuildRole"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -98,8 +91,6 @@ Resources:
                   - logs:*
                   - s3:*
                   - cloudformation:ValidateTemplate
-                  - secretsmanager:GetSecretValue
-                  - ssm:GetParameter
                 Resource: "*"
 
   CodeBuildProject:
@@ -141,6 +132,7 @@ Resources:
               - !Ref ArtifactBucketWestName
 
       Stages:
+
         - Name: Source
           Actions:
             - Name: SourceAction
@@ -149,7 +141,8 @@ Resources:
                 Owner: ThirdParty
                 Provider: GitHub
                 Version: 1
-              OutputArtifacts: [ { Name: SourceArtifact } ]
+              OutputArtifacts:
+                - SourceArtifact
               Configuration:
                 Owner: !Ref GitHubOwner
                 Repo: !Ref GitHubRepo
@@ -164,28 +157,39 @@ Resources:
                 Owner: AWS
                 Provider: CodeBuild
                 Version: 1
-              InputArtifacts: [ { Name: SourceArtifact } ]
-              OutputArtifacts: [ { Name: BuildArtifact } ]
+              InputArtifacts:
+                - SourceArtifact
+              OutputArtifacts:
+                - BuildArtifact
               Configuration:
                 ProjectName: !Ref CodeBuildProject
 
+        ####################################################
+        # DEPLOY DEV — APP FIRST (correct order)
+        ####################################################
         - Name: DeployDev
           Actions:
+
             - Name: DeployAppDev
               ActionTypeId:
                 Category: Deploy
                 Owner: AWS
                 Provider: CloudFormation
                 Version: 1
+              InputArtifacts:
+                - BuildArtifact
               Region: us-east-1
-              InputArtifacts: [ { Name: BuildArtifact } ]
               Configuration:
                 ActionMode: CREATE_UPDATE
-                StackName: app-stack-dev
                 RoleArn: !GetAtt CodePipelineRole.Arn
+                StackName: app-stack-dev
                 TemplatePath: BuildArtifact::templates/app.yaml
                 Capabilities: CAPABILITY_IAM
-                ParameterOverrides: !Sub '{"EnvName": "DEV", "ArtifactBucket": "${ArtifactBucketEastName}"}'
+                ParameterOverrides: !Sub |
+                  {
+                    "EnvName": "DEV",
+                    "ArtifactBucket": "${ArtifactBucketEastName}"
+                  }
               RunOrder: 1
 
             - Name: DeployDBDev
@@ -194,15 +198,16 @@ Resources:
                 Owner: AWS
                 Provider: CloudFormation
                 Version: 1
+              InputArtifacts:
+                - BuildArtifact
               Region: us-east-1
-              InputArtifacts: [ { Name: BuildArtifact } ]
               Configuration:
                 ActionMode: CREATE_UPDATE
-                StackName: db-stack-dev
                 RoleArn: !GetAtt CodePipelineRole.Arn
+                StackName: db-stack-dev
                 TemplatePath: BuildArtifact::templates/db.yaml
                 Capabilities: CAPABILITY_IAM
-                ParameterOverrides: '{"EnvName":"DEV"}'
+                ParameterOverrides: '{"EnvName": "DEV"}'
               RunOrder: 2
 
         - Name: ManualApproval
@@ -214,23 +219,32 @@ Resources:
                 Provider: Manual
                 Version: 1
 
+        ####################################################
+        # DEPLOY PROD — APP FIRST
+        ####################################################
         - Name: DeployProd
           Actions:
+
             - Name: DeployAppProd
               ActionTypeId:
                 Category: Deploy
                 Owner: AWS
                 Provider: CloudFormation
                 Version: 1
+              InputArtifacts:
+                - BuildArtifact
               Region: us-west-2
-              InputArtifacts: [ { Name: BuildArtifact } ]
               Configuration:
                 ActionMode: CREATE_UPDATE
-                StackName: app-stack-prod
                 RoleArn: !GetAtt CodePipelineRole.Arn
+                StackName: app-stack-prod
                 TemplatePath: BuildArtifact::templates/app.yaml
                 Capabilities: CAPABILITY_IAM
-                ParameterOverrides: !Sub '{"EnvName": "PROD", "ArtifactBucket": "${ArtifactBucketWestName}"}'
+                ParameterOverrides: !Sub |
+                  {
+                    "EnvName": "PROD",
+                    "ArtifactBucket": "${ArtifactBucketWestName}"
+                  }
               RunOrder: 1
 
             - Name: DeployDBProd
@@ -239,12 +253,13 @@ Resources:
                 Owner: AWS
                 Provider: CloudFormation
                 Version: 1
+              InputArtifacts:
+                - BuildArtifact
               Region: us-west-2
-              InputArtifacts: [ { Name: BuildArtifact } ]
               Configuration:
                 ActionMode: CREATE_UPDATE
-                StackName: db-stack-prod
                 RoleArn: !GetAtt CodePipelineRole.Arn
+                StackName: db-stack-prod
                 TemplatePath: BuildArtifact::templates/db.yaml
                 Capabilities: CAPABILITY_IAM
                 ParameterOverrides: '{"EnvName":"PROD"}'
@@ -252,5 +267,4 @@ Resources:
 
 Outputs:
   PipelineName:
-    Description: Pipeline name
     Value: !Ref CICDPipeline
