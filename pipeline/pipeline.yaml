@@ -1,109 +1,124 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Multi-region CI/CD Pipeline for 3-tier CloudFormation app
+Description: Multi-region CI/CD Pipeline for 3-tier project
 
 Parameters:
-  GitHubOwner:
+  GitHubToken:
     Type: String
-    Default: anzy-anzy
-
+    NoEcho: true
   GitHubRepo:
     Type: String
     Default: cicd-3tier-cloudformation
-
+  GitHubOwner:
+    Type: String
+    Default: anzy-anz
   GitHubBranch:
     Type: String
     Default: main
 
-  GitHubToken:
-    Type: String
-    NoEcho: true
-
 Resources:
 
-  ###################################################
-  # IAM Roles
-  ###################################################
+  ################################
+  # IAM ROLE FOR CODEPIPELINE
+  ################################
   CodePipelineRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
-        Version: "2012-10-17"
+        Version: 2012-10-17
         Statement:
           - Effect: Allow
             Principal:
               Service: codepipeline.amazonaws.com
             Action: sts:AssumeRole
+      Path: "/"
       Policies:
         - PolicyName: CodePipelinePolicy
           PolicyDocument:
-            Version: "2012-10-17"
+            Version: 2012-10-17
             Statement:
               - Effect: Allow
                 Action:
-                  - s3:*
-                  - codebuild:*
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetBucketLocation
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource: "*"
+              - Effect: Allow
+                Action:
                   - cloudformation:*
-                  - iam:PassRole
                 Resource: "*"
 
+  ################################
+  # IAM ROLE FOR CODEBUILD
+  ################################
   CodeBuildRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
-        Version: "2012-10-17"
+        Version: 2012-10-17
         Statement:
           - Effect: Allow
             Principal:
               Service: codebuild.amazonaws.com
             Action: sts:AssumeRole
+      Path: "/"
       Policies:
         - PolicyName: CodeBuildPolicy
           PolicyDocument:
-            Version: "2012-10-17"
+            Version: 2012-10-17
             Statement:
               - Effect: Allow
                 Action:
-                  - logs:*
                   - s3:*
-                  - cloudformation:ValidateTemplate
+                  - cloudformation:*
                 Resource: "*"
 
-  ###################################################
-  # CodeBuild
-  ###################################################
+  ################################
+  # CODEBUILD PROJECT
+  ################################
   CodeBuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
-      Name: cicd-3tier-build
+      Name: CICD-BuildProject
       ServiceRole: !GetAtt CodeBuildRole.Arn
       Artifacts:
         Type: CODEPIPELINE
-      Environment:
-        ComputeType: BUILD_GENERAL1_SMALL
-        Image: aws/codebuild/standard:7.0
-        Type: LINUX_CONTAINER
       Source:
         Type: CODEPIPELINE
-        BuildSpec: buildspec.yml
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:4.0
+        Type: LINUX_CONTAINER
 
-  ###################################################
-  # CodePipeline
-  ###################################################
+  ##############################################
+  # MULTI-REGION ARTIFACT STORES (mandatory)
+  ##############################################
   CICDPipeline:
     Type: AWS::CodePipeline::Pipeline
     Properties:
       Name: cicd-pipeline-stack-multi-region-pipeline
       RoleArn: !GetAtt CodePipelineRole.Arn
 
-      ArtifactStore:
-        Type: S3
-        Location: 436083576844-cicd-pipeline-stack-us-east-1-artifacts
+      ArtifactStores:
+        - Region: us-east-1
+          ArtifactStore:
+            Type: S3
+            Location: 436083576844-cicd-pipeline-stack-us-east-1-artifacts
+
+        - Region: us-west-2
+          ArtifactStore:
+            Type: S3
+            Location: 436083576844-cicd-pipeline-stack-us-west-2-artifacts-v2
 
       Stages:
 
-        ###################################################
+        ###########################################
         # SOURCE STAGE
-        ###################################################
+        ###########################################
         - Name: Source
           Actions:
             - Name: GitHubSource
@@ -111,7 +126,7 @@ Resources:
                 Category: Source
                 Owner: ThirdParty
                 Provider: GitHub
-                Version: 1
+                Version: "1"
               OutputArtifacts:
                 - Name: SourceArtifact
               Configuration:
@@ -119,10 +134,11 @@ Resources:
                 Repo: !Ref GitHubRepo
                 Branch: !Ref GitHubBranch
                 OAuthToken: !Ref GitHubToken
+              RunOrder: 1
 
-        ###################################################
+        ###########################################
         # BUILD STAGE
-        ###################################################
+        ###########################################
         - Name: Build
           Actions:
             - Name: CodeBuildAction
@@ -130,33 +146,34 @@ Resources:
                 Category: Build
                 Owner: AWS
                 Provider: CodeBuild
-                Version: 1
+                Version: "1"
               InputArtifacts:
                 - Name: SourceArtifact
               OutputArtifacts:
                 - Name: BuildArtifact
               Configuration:
                 ProjectName: !Ref CodeBuildProject
+              RunOrder: 1
 
-        ###################################################
-        # DEPLOY DEV
-        ###################################################
-        - Name: DeployDev
+        ###########################################
+        # DEPLOY TO us-east-1 (DEV)
+        ###########################################
+        - Name: Deploy-Dev-us-east-1
           Actions:
-            - Name: DeployAppDev
+            - Name: CloudFormationDeployDev
               ActionTypeId:
                 Category: Deploy
                 Owner: AWS
                 Provider: CloudFormation
-                Version: 1
+                Version: "1"
               InputArtifacts:
                 - Name: BuildArtifact
-              Region: us-east-1
               Configuration:
                 ActionMode: CREATE_UPDATE
                 StackName: app-stack-dev
-                TemplatePath: BuildArtifact::templates/app.yaml
                 Capabilities: CAPABILITY_IAM
+                Region: us-east-1
+                TemplatePath: BuildArtifact::templates/app.yaml
                 ParameterOverrides: |
                   {
                     "EnvName": "DEV",
@@ -164,79 +181,31 @@ Resources:
                   }
               RunOrder: 1
 
-            - Name: DeployDBDev
+        ###########################################
+        # DEPLOY TO us-west-2 (PROD)
+        ###########################################
+        - Name: Deploy-Prod-us-west-2
+          Actions:
+            - Name: CloudFormationDeployProd
               ActionTypeId:
                 Category: Deploy
                 Owner: AWS
                 Provider: CloudFormation
-                Version: 1
+                Version: "1"
               InputArtifacts:
                 - Name: BuildArtifact
-              Region: us-east-1
-              Configuration:
-                ActionMode: CREATE_UPDATE
-                StackName: db-stack-dev
-                TemplatePath: BuildArtifact::templates/db.yaml
-                Capabilities: CAPABILITY_IAM
-                ParameterOverrides: |
-                  { "EnvName": "DEV" }
-              RunOrder: 2
-
-        ###################################################
-        # MANUAL APPROVAL
-        ###################################################
-        - Name: ManualApproval
-          Actions:
-            - Name: ApproveForProd
-              ActionTypeId:
-                Category: Approval
-                Owner: AWS
-                Provider: Manual
-                Version: 1
-
-        ###################################################
-        # DEPLOY PROD
-        ###################################################
-        - Name: DeployProd
-          Actions:
-            - Name: DeployAppProd
-              ActionTypeId:
-                Category: Deploy
-                Owner: AWS
-                Provider: CloudFormation
-                Version: 1
-              InputArtifacts:
-                - Name: BuildArtifact
-              Region: us-west-2
               Configuration:
                 ActionMode: CREATE_UPDATE
                 StackName: app-stack-prod
-                TemplatePath: BuildArtifact::templates/app.yaml
                 Capabilities: CAPABILITY_IAM
+                Region: us-west-2
+                TemplatePath: BuildArtifact::templates/app.yaml
                 ParameterOverrides: |
                   {
                     "EnvName": "PROD",
                     "ArtifactBucket": "436083576844-cicd-pipeline-stack-us-west-2-artifacts-v2"
                   }
               RunOrder: 1
-
-            - Name: DeployDBProd
-              ActionTypeId:
-                Category: Deploy
-                Owner: AWS
-                Provider: CloudFormation
-                Version: 1
-              InputArtifacts:
-                - Name: BuildArtifact
-              Region: us-west-2
-              Configuration:
-                ActionMode: CREATE_UPDATE
-                StackName: db-stack-prod
-                TemplatePath: BuildArtifact::templates/db.yaml
-                Capabilities: CAPABILITY_IAM
-                ParameterOverrides: |
-                  { "EnvName": "PROD" }
-              RunOrder: 2
 
 Outputs:
   PipelineName:
