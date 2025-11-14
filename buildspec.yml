@@ -19,8 +19,8 @@ phases:
     commands:
       - echo "Preparing website artifact..."
       - mkdir -p output/app
-      - cp app/index.html output/app/index.html
-      - echo "index.html copied to output/app/index.html"
+      - cp app/index.template.html output/app/index.html
+      - echo "index.html prepared."
 
   post_build:
     commands:

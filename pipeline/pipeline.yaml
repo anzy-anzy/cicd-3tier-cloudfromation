@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Multi-region CI/CD Pipeline for 3-tier CloudFormation application
+Description: Multi-region CI/CD Pipeline for 3-tier CloudFormation app
 
 Parameters:
   GitHubOwner:
@@ -22,53 +22,8 @@ Parameters:
     Type: String
     Default: cicd-pipeline-stack
 
-  ArtifactBucketEastName:
-    Type: String
-    Default: ""
-
-  ArtifactBucketWestName:
-    Type: String
-    Default: ""
-
-Conditions:
-  CreateEastBucket: !Equals [!Ref ArtifactBucketEastName, ""]
-  CreateWestBucket: !Equals [!Ref ArtifactBucketWestName, ""]
-
 Resources:
 
-  ######################################################
-  # ARTIFACT BUCKETS (CREATED ONLY IF NOT PROVIDED)
-  ######################################################
-  ArtifactBucketEast:
-    Type: AWS::S3::Bucket
-    Condition: CreateEastBucket
-    DeletionPolicy: Retain
-
-  ArtifactBucketWest:
-    Type: AWS::S3::Bucket
-    Condition: CreateWestBucket
-    DeletionPolicy: Retain
-
-  ######################################################
-  # RESOLVED BUCKET NAMES (ALWAYS HAVE A VALUE)
-  ######################################################
-  BucketDev:
-    Condition: CreateEastBucket
-    Value: !Ref ArtifactBucketEast
-  BucketDevProvided:
-    Condition: !Not [!Equals [!Ref ArtifactBucketEastName, ""]]
-    Value: !Ref ArtifactBucketEastName
-
-  BucketProd:
-    Condition: CreateWestBucket
-    Value: !Ref ArtifactBucketWest
-  BucketProdProvided:
-    Condition: !Not [!Equals [!Ref ArtifactBucketWestName, ""]]
-    Value: !Ref ArtifactBucketWestName
-
-  ######################################################
-  # CODEPIPELINE ROLE
-  ######################################################
   CodePipelineRole:
     Type: AWS::IAM::Role
     Properties:
@@ -94,9 +49,6 @@ Resources:
                   - iam:PassRole
                 Resource: "*"
 
-  ######################################################
-  # CODEBUILD ROLE + PROJECT
-  ######################################################
   CodeBuildRole:
     Type: AWS::IAM::Role
     Properties:
@@ -134,9 +86,6 @@ Resources:
         Type: CODEPIPELINE
         BuildSpec: buildspec.yml
 
-  ######################################################
-  # THE PIPELINE
-  ######################################################
   CICDPipeline:
     Type: AWS::CodePipeline::Pipeline
     Properties:
@@ -147,24 +96,15 @@ Resources:
         - Region: us-east-1
           ArtifactStore:
             Type: S3
-            Location: !If
-              - CreateEastBucket
-              - !Ref ArtifactBucketEast
-              - !Ref ArtifactBucketEastName
+            Location: 436083576844-cicd-pipeline-stack-us-east-1-artifacts
 
         - Region: us-west-2
           ArtifactStore:
             Type: S3
-            Location: !If
-              - CreateWestBucket
-              - !Ref ArtifactBucketWest
-              - !Ref ArtifactBucketWestName
+            Location: 436083576844-cicd-pipeline-stack-us-west-2-artifacts-v2
 
       Stages:
 
-        #######################################################
-        # SOURCE STAGE
-        #######################################################
         - Name: Source
           Actions:
             - Name: SourceAction
@@ -181,9 +121,6 @@ Resources:
                 Branch: !Ref GitHubBranch
                 OAuthToken: !Ref GitHubToken
 
-        #######################################################
-        # BUILD STAGE
-        #######################################################
         - Name: Build
           Actions:
             - Name: BuildAction
@@ -199,9 +136,9 @@ Resources:
               Configuration:
                 ProjectName: !Ref CodeBuildProject
 
-        #######################################################
-        # DEPLOY DEV (APP FIRST)
-        #######################################################
+        ####################################################
+        # DEPLOY DEV — APP FIRST
+        ####################################################
         - Name: DeployDev
           Actions:
 
@@ -211,19 +148,19 @@ Resources:
                 Owner: AWS
                 Provider: CloudFormation
                 Version: 1
-              Region: us-east-1
               InputArtifacts:
                 - BuildArtifact
+              Region: us-east-1
               Configuration:
                 ActionMode: CREATE_UPDATE
-                StackName: app-stack-dev
                 RoleArn: !GetAtt CodePipelineRole.Arn
+                StackName: app-stack-dev
                 TemplatePath: BuildArtifact::templates/app.yaml
                 Capabilities: CAPABILITY_IAM
-                ParameterOverrides: !Sub |
+                ParameterOverrides: |
                   {
                     "EnvName": "DEV",
-                    "ArtifactBucket": "${BucketDev}"
+                    "ArtifactBucket": "436083576844-cicd-pipeline-stack-us-east-1-artifacts"
                   }
               RunOrder: 1
 
@@ -233,21 +170,21 @@ Resources:
                 Owner: AWS
                 Provider: CloudFormation
                 Version: 1
-              Region: us-east-1
               InputArtifacts:
                 - BuildArtifact
+              Region: us-east-1
               Configuration:
                 ActionMode: CREATE_UPDATE
-                StackName: db-stack-dev
                 RoleArn: !GetAtt CodePipelineRole.Arn
+                StackName: db-stack-dev
                 TemplatePath: BuildArtifact::templates/db.yaml
                 Capabilities: CAPABILITY_IAM
                 ParameterOverrides: '{"EnvName": "DEV"}'
               RunOrder: 2
 
-        #######################################################
+        ####################################################
         # MANUAL APPROVAL
-        #######################################################
+        ####################################################
         - Name: ManualApproval
           Actions:
             - Name: ApproveForProd
@@ -257,9 +194,9 @@ Resources:
                 Provider: Manual
                 Version: 1
 
-        #######################################################
-        # DEPLOY PROD (APP FIRST)
-        #######################################################
+        ####################################################
+        # DEPLOY PROD — APP FIRST
+        ####################################################
         - Name: DeployProd
           Actions:
 
@@ -269,19 +206,19 @@ Resources:
                 Owner: AWS
                 Provider: CloudFormation
                 Version: 1
-              Region: us-west-2
               InputArtifacts:
                 - BuildArtifact
+              Region: us-west-2
               Configuration:
                 ActionMode: CREATE_UPDATE
-                StackName: app-stack-prod
                 RoleArn: !GetAtt CodePipelineRole.Arn
+                StackName: app-stack-prod
                 TemplatePath: BuildArtifact::templates/app.yaml
                 Capabilities: CAPABILITY_IAM
-                ParameterOverrides: !Sub |
+                ParameterOverrides: |
                   {
                     "EnvName": "PROD",
-                    "ArtifactBucket": "${BucketProd}"
+                    "ArtifactBucket": "436083576844-cicd-pipeline-stack-us-west-2-artifacts-v2"
                   }
               RunOrder: 1
 
@@ -291,16 +228,16 @@ Resources:
                 Owner: AWS
                 Provider: CloudFormation
                 Version: 1
-              Region: us-west-2
               InputArtifacts:
                 - BuildArtifact
+              Region: us-west-2
               Configuration:
                 ActionMode: CREATE_UPDATE
-                StackName: db-stack-prod
                 RoleArn: !GetAtt CodePipelineRole.Arn
+                StackName: db-stack-prod
                 TemplatePath: BuildArtifact::templates/db.yaml
                 Capabilities: CAPABILITY_IAM
-                ParameterOverrides: '{"EnvName": "PROD"}'
+                ParameterOverrides: '{"EnvName":"PROD"}'
               RunOrder: 2
 
 Outputs:
