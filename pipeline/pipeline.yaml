@@ -24,6 +24,9 @@ Parameters:
 
 Resources:
 
+  #############################################################
+  # IAM ROLES
+  #############################################################
   CodePipelineRole:
     Type: AWS::IAM::Role
     Properties:
@@ -71,6 +74,9 @@ Resources:
                   - cloudformation:ValidateTemplate
                 Resource: "*"
 
+  #############################################################
+  # CODEBUILD PROJECT
+  #############################################################
   CodeBuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
@@ -86,6 +92,9 @@ Resources:
         Type: CODEPIPELINE
         BuildSpec: buildspec.yml
 
+  #############################################################
+  # CODEPIPELINE
+  #############################################################
   CICDPipeline:
     Type: AWS::CodePipeline::Pipeline
     Properties:
@@ -105,6 +114,9 @@ Resources:
 
       Stages:
 
+        #############################################################
+        # SOURCE
+        #############################################################
         - Name: Source
           Actions:
             - Name: SourceAction
@@ -121,6 +133,9 @@ Resources:
                 Branch: !Ref GitHubBranch
                 OAuthToken: !Ref GitHubToken
 
+        #############################################################
+        # BUILD
+        #############################################################
         - Name: Build
           Actions:
             - Name: BuildAction
@@ -136,9 +151,9 @@ Resources:
               Configuration:
                 ProjectName: !Ref CodeBuildProject
 
-        ####################################################
-        # DEPLOY DEV — APP FIRST
-        ####################################################
+        #############################################################
+        # DEPLOY DEV
+        #############################################################
         - Name: DeployDev
           Actions:
 
@@ -148,9 +163,9 @@ Resources:
                 Owner: AWS
                 Provider: CloudFormation
                 Version: 1
+              Region: us-east-1
               InputArtifacts:
                 - BuildArtifact
-              Region: us-east-1
               Configuration:
                 ActionMode: CREATE_UPDATE
                 RoleArn: !GetAtt CodePipelineRole.Arn
@@ -170,9 +185,9 @@ Resources:
                 Owner: AWS
                 Provider: CloudFormation
                 Version: 1
+              Region: us-east-1
               InputArtifacts:
                 - BuildArtifact
-              Region: us-east-1
               Configuration:
                 ActionMode: CREATE_UPDATE
                 RoleArn: !GetAtt CodePipelineRole.Arn
@@ -182,9 +197,9 @@ Resources:
                 ParameterOverrides: '{"EnvName": "DEV"}'
               RunOrder: 2
 
-        ####################################################
-        # MANUAL APPROVAL
-        ####################################################
+        #############################################################
+        # APPROVAL
+        #############################################################
         - Name: ManualApproval
           Actions:
             - Name: ApproveForProd
@@ -194,9 +209,9 @@ Resources:
                 Provider: Manual
                 Version: 1
 
-        ####################################################
-        # DEPLOY PROD — APP FIRST
-        ####################################################
+        #############################################################
+        # DEPLOY PROD
+        #############################################################
         - Name: DeployProd
           Actions:
 
@@ -206,9 +221,9 @@ Resources:
                 Owner: AWS
                 Provider: CloudFormation
                 Version: 1
+              Region: us-west-2
               InputArtifacts:
                 - BuildArtifact
-              Region: us-west-2
               Configuration:
                 ActionMode: CREATE_UPDATE
                 RoleArn: !GetAtt CodePipelineRole.Arn
@@ -228,9 +243,9 @@ Resources:
                 Owner: AWS
                 Provider: CloudFormation
                 Version: 1
+              Region: us-west-2
               InputArtifacts:
                 - BuildArtifact
-              Region: us-west-2
               Configuration:
                 ActionMode: CREATE_UPDATE
                 RoleArn: !GetAtt CodePipelineRole.Arn
